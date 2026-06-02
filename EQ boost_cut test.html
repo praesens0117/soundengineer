@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>EQ Ear Training</title>
+<style>
+    * {
+        box-sizing: border-box; /* 패딩과 테두리가 크기를 차지해 잘리는 현상 방지 */
+    }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        max-width: 500px;
+        margin: 0 auto;
+        padding: 20px;
+        line-height: 1.6;
+        background-color: #f5f5f7;
+        color: #333;
+    }
+    h1 {
+        font-size: 22px;
+        text-align: center;
+        margin-bottom: 5px;
+    }
+    .description {
+        font-size: 13px;
+        color: #666;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    input[type="file"] {
+        display: block;
+        width: 100%;
+        margin-bottom: 15px;
+        padding: 12px;
+        background: #fff;
+        border-radius: 8px;
+        border: 1px solid #ddd;
+    }
+    button {
+        padding: 12px;
+        cursor: pointer;
+        border-radius: 8px;
+        border: none;
+        font-size: 14px;
+        font-weight: 600;
+        transition: background 0.2s;
+    }
+    #startBtn {
+        width: 100%;
+        background-color: #0071e3;
+        color: white;
+        margin-bottom: 15px;
+        font-size: 16px;
+    }
+    #startBtn:active { background-color: #005bb5; }
+    
+    .audio-group {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 10px 0;
+        padding: 12px;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .audio-group span {
+        font-weight: bold;
+        flex: 1;
+    }
+    .audio-group button {
+        background-color: #e5e5ea;
+        color: #1d1d1f;
+        margin-left: 5px;
+        padding: 8px 14px;
+    }
+    .audio-group button:active { background-color: #d1d1d6; }
+    
+    h2 {
+        font-size: 16px;
+        margin-top: 25px;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 8px;
+    }
+    
+    /* 9개 버튼이 무조건 화면에 꽉 차게 보이도록 고안된 플렉스 레이아웃 */
+    .freq-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 15px;
+        width: 100%;
+    }
+    .freq-buttons button {
+        flex: 1 1 calc(33.33% - 6px); /* 정확히 한 줄에 3개씩 등분 */
+        background-color: #fff;
+        border: 1px solid #d2d2d7;
+        padding: 15px 0;
+        text-align: center;
+    }
+    .freq-buttons button:active { background-color: #e8e8ed; }
+    
+    .result {
+        margin-top: 25px;
+        padding: 15px;
+        border-radius: 8px;
+        text-align: center;
+        font-weight: bold;
+        font-size: 15px;
+        background-color: #e3f2fd;
+        color: #0d47a1;
+        min-height: 54px;
+        word-break: keep-all;
+    }
+</style>
+</head>
+<body>
+
+<h1>EQ Ear Training</h1>
+<p class="description">음원을 업로드하고 문제를 생성한 뒤, 변화된 주파수를 맞춰보세요.</p>
+
+<input type="file" id="audioFile" accept="audio/*">
+
+<button id="startBtn">새 문제 생성</button>
+
+<div class="audio-group">
+    <span>원본 음원</span>
+    <button id="playOriginalBtn">재생</button>
+    <button id="pauseOriginalBtn">일시정지</button>
+</div>
+
+<div class="audio-group">
+    <span>변경 음원 (EQ)</span>
+    <button id="playModifiedBtn">재생</button>
+    <button id="pauseModifiedBtn">일시정지</button>
+</div>
+
+<h2>주파수 선택 (9개 모두 보기)</h2>
+<div class="freq-buttons">
+    <button data-freq="63">63 Hz</button>
+    <button data-freq="125">125 Hz</button>
+    <button data-freq="250">250 Hz</button>
+    <button data-freq="500">500 Hz</button>
+    <button data-freq="1000">1 kHz</button>
+    <button data-freq="2000">2 kHz</button>
+    <button data-freq="4000">4 kHz</button>
+    <button data-freq="8000">8 kHz</button>
+    <button data-freq="16000">16 kHz</button>
+</div>
+
+<div class="result" id="result">파일을 먼저 업로드해 주세요.</div>
+
+<script>
+const frequencies = [63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+
+let audioContext;
+let audioBuffer;
+
+// 원본 상태 관리
+let originalSource = null;
+let originalOffset = 0;
+let originalStartTime = 0;
+let isOriginalPlaying = false;
+
+// 변경본 상태 관리
+let modifiedSource = null;
+let modifiedOffset = 0;
+let modifiedStartTime = 0;
+let isModifiedPlaying = false;
+
+let selectedFrequency = null;
+let selectedGain = null;
+
+// iOS Safari 호환을 위한 AudioContext 터치 활성화 함수
+function getAudioContext() {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+    return audioContext;
+}
+
+// 모든 재생 상태 초기화
+function resetAllAudio() {
+    if (isOriginalPlaying) pauseOriginal();
+    if (isModifiedPlaying) pauseModified();
+    originalOffset = 0;
+    modifiedOffset = 0;
+}
+
+// 파일 업로드 처리
+document.getElementById("audioFile").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    document.getElementById("result").innerText = "음원 디코딩 중...";
+    resetAllAudio();
+
+    const ctx = getAudioContext();
+    const arrayBuffer = await file.arrayBuffer();
+
+    ctx.decodeAudioData(arrayBuffer, function(buffer) {
+        audioBuffer = buffer;
+        document.getElementById("result").innerText = "음원 로드 완료! '새 문제 생성'을 눌러주세요.";
+    }, function(err) {
+        document.getElementById("result").innerText = "음원 로드 실패: " + err;
+    });
+});
+
+// 문제 생성
+document.getElementById("startBtn").addEventListener("click", () => {
+    if (!audioBuffer) {
+        alert("먼저 음원을 업로드하세요.");
+        return;
+    }
+
+    resetAllAudio();
+
+    const randomIndex = Math.floor(Math.random() * frequencies.length);
+    selectedFrequency = frequencies[randomIndex];
+    selectedGain = Math.random() > 0.5 ? 6 : -6;
+
+    document.getElementById("result").innerText = "🎧 새로운 문제가 생성되었습니다! 아래 음원들을 비교해보세요.";
+});
+
+// --- 원본 제어 핸들러 ---
+document.getElementById("playOriginalBtn").addEventListener("click", () => {
+    if (!audioBuffer) return;
+    playOriginal();
+});
+
+document.getElementById("pauseOriginalBtn").addEventListener("click", () => {
+    pauseOriginal();
+});
+
+function playOriginal() {
+    const ctx = getAudioContext();
+    if (isOriginalPlaying) return;
+
+    if (isModifiedPlaying) pauseModified();
+
+    originalSource = ctx.createBufferSource();
+    originalSource.buffer = audioBuffer;
+    originalSource.connect(ctx.destination);
+
+    originalSource.onended = () => {
+        if (isOriginalPlaying) {
+            isOriginalPlaying = false;
+            originalOffset = 0;
+        }
+    };
+
+    isOriginalPlaying = true;
+    originalStartTime = ctx.currentTime;
+    originalSource.start(0, originalOffset % audioBuffer.duration);
+}
+
+function pauseOriginal() {
+    if (!isOriginalPlaying || !originalSource) return;
+
+    const ctx = getAudioContext();
+    isOriginalPlaying = false;
+    originalOffset += ctx.currentTime - originalStartTime;
+    
+    originalSource.stop();
+    originalSource = null;
+}
+
+// --- 변경본 제어 핸들러 ---
+document.getElementById("playModifiedBtn").addEventListener("click", () => {
+    if (!audioBuffer) return;
+    if (selectedFrequency === null) {
+        alert("먼저 '새 문제 생성' 버튼을 눌러주세요.");
+        return;
+    }
+    playModified();
+});
+
+document.getElementById("pauseModifiedBtn").addEventListener("click", () => {
+    pauseModified();
+});
+
+function playModified() {
+    const ctx = getAudioContext();
+    if (isModifiedPlaying) return;
+
+    if (isOriginalPlaying) pauseOriginal();
+
+    modifiedSource = ctx.createBufferSource();
+    modifiedSource.buffer = audioBuffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "peaking";
+    filter.frequency.value = selectedFrequency;
+    filter.gain.value = selectedGain;
+    filter.Q.value = 1.2;
+
+    modifiedSource.connect(filter);
+    filter.connect(ctx.destination);
+
+    modifiedSource.onended = () => {
+        if (isModifiedPlaying) {
+            isModifiedPlaying = false;
+            modifiedOffset = 0;
+        }
+    };
+
+    isModifiedPlaying = true;
+    modifiedStartTime = ctx.currentTime;
+    modifiedSource.start(0, modifiedOffset % audioBuffer.duration);
+}
+
+function pauseModified() {
+    if (!isModifiedPlaying || !modifiedSource) return;
+
+    const ctx = getAudioContext();
+    isModifiedPlaying = false;
+    modifiedOffset += ctx.currentTime - modifiedStartTime;
+    
+    modifiedSource.stop();
+    modifiedSource = null;
+}
+
+// 정답 확인 로직
+document.querySelectorAll(".freq-buttons button").forEach(btn => {
+    btn.addEventListener("click", () => {
+        if (selectedFrequency === null) {
+            document.getElementById("result").innerText = "먼저 '새 문제 생성' 버튼을 눌러주세요.";
+            return;
+        }
+
+        const guessed = parseInt(btn.dataset.freq);
+        const action = selectedGain > 0 ? "Boost 🔺" : "Cut 🔻";
+
+        if (guessed === selectedFrequency) {
+            document.getElementById("result").innerText =
+                `🎉 정답입니다!\n정답: ${selectedFrequency >= 1000 ? (selectedFrequency/1000)+'kHz' : selectedFrequency+'Hz'} (${action})`;
+        } else {
+            document.getElementById("result").innerText =
+                `❌ 오답입니다!\n정답: ${selectedFrequency >= 1000 ? (selectedFrequency/1000)+'kHz' : selectedFrequency+'Hz'} (${action})`;
+        }
+    });
+});
+</script>
+
+</body>
+</html>
